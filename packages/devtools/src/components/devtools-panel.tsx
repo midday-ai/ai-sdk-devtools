@@ -52,7 +52,7 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   "message-start": "Message Starts",
   "message-chunk": "Message Chunks",
   "message-complete": "Message Complete",
-  "start": "Stream Start",
+  start: "Stream Start",
   "start-step": "Step Starts",
   "text-start": "Text Starts",
   "text-delta": "Text Deltas",
@@ -70,10 +70,10 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
 interface DevtoolsPanelProps {
   events: AIEvent[];
   isCapturing: boolean;
-  onToggleCapturing: () => void;
-  onClearEvents: () => void;
-  onClose: () => void;
-  onTogglePosition: () => void;
+  toggleCapturing: () => void;
+  clearEvents: () => void;
+  onClose?: () => void;
+  onTogglePosition?: () => void;
   config: DevtoolsConfig;
   className?: string;
   modelId?: string; // Optional model ID for context insights
@@ -82,14 +82,169 @@ interface DevtoolsPanelProps {
 export function DevtoolsPanel({
   events,
   isCapturing,
-  onToggleCapturing,
-  onClearEvents,
+  toggleCapturing,
+  clearEvents,
   onClose,
   onTogglePosition,
   config,
   className = "",
   modelId,
 }: DevtoolsPanelProps) {
+  const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
+
+  const { availableStoreIds } = useCurrentState({
+    enabled: true,
+  });
+
+  // Auto-select default store when available
+  useEffect(() => {
+    if (availableStoreIds.length > 0 && !selectedStoreId) {
+      // Prefer "default" store if available, otherwise select the first one
+      const defaultStoreId = availableStoreIds.includes("default")
+        ? "default"
+        : availableStoreIds[0];
+      setSelectedStoreId(defaultStoreId);
+    }
+  }, [availableStoreIds, selectedStoreId]);
+
+  // Resize functionality
+  const [isResizing, setIsResizing] = useState(false);
+  const [panelHeight, setPanelHeight] = useState(config.height || 300);
+  const [panelWidth, setPanelWidth] = useState(config.width || 500);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const resizeRef = useRef<HTMLButtonElement>(null);
+
+  // Resize handlers
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+  }, []);
+
+  const handleMouseMove = useCallback(
+    (e: MouseEvent) => {
+      if (!isResizing) return;
+
+      if (config.position === "bottom") {
+        const newHeight = window.innerHeight - e.clientY;
+        const minHeight = 200;
+        const maxHeight = window.innerHeight * 0.8;
+        setPanelHeight(Math.max(minHeight, Math.min(maxHeight, newHeight)));
+      } else {
+        const newWidth = window.innerWidth - e.clientX;
+        const minWidth = 500;
+        const maxWidth = window.innerWidth * 0.8;
+        setPanelWidth(Math.max(minWidth, Math.min(maxWidth, newWidth)));
+      }
+    },
+    [isResizing, config.position],
+  );
+
+  const handleMouseUp = useCallback(() => {
+    setIsResizing(false);
+  }, []);
+
+  // Add global mouse event listeners
+  React.useEffect(() => {
+    if (isResizing) {
+      document.addEventListener("mousemove", handleMouseMove);
+      document.addEventListener("mouseup", handleMouseUp);
+      document.body.style.cursor =
+        config.position === "bottom" ? "ns-resize" : "ew-resize";
+      document.body.style.userSelect = "none";
+    } else {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    }
+
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, [isResizing, handleMouseMove, handleMouseUp, config.position]);
+
+  // Add keyboard event listener for Escape key
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose?.();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      ref={panelRef}
+      className={`ai-devtools-panel ai-devtools-panel-${config.position} ${className}`}
+      style={{
+        height: config.position === "bottom" ? panelHeight : undefined,
+        width: config.position === "right" ? panelWidth : undefined,
+      }}
+    >
+      {/* Resize Handle */}
+      <button
+        ref={resizeRef}
+        type="button"
+        className={`ai-devtools-resize-handle ai-devtools-resize-handle-${config.position}`}
+        onMouseDown={handleMouseDown}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            // Create a synthetic mouse event for keyboard interaction
+            const syntheticEvent = {
+              ...e,
+              preventDefault: e.preventDefault,
+              clientX: 0,
+              clientY: 0,
+              button: 0,
+              buttons: 0,
+              movementX: 0,
+              movementY: 0,
+              pageX: 0,
+              pageY: 0,
+              screenX: 0,
+              screenY: 0,
+              relatedTarget: null,
+            } as unknown as React.MouseEvent<HTMLButtonElement>;
+            handleMouseDown(syntheticEvent);
+          }
+        }}
+      />
+      <DevtoolsPanelContent
+        events={events}
+        isCapturing={isCapturing}
+        toggleCapturing={toggleCapturing}
+        clearEvents={clearEvents}
+        onClose={onClose}
+        onTogglePosition={onTogglePosition}
+        position={config.position}
+        className={className}
+        modelId={modelId}
+      />
+    </div>
+  );
+}
+
+export function DevtoolsPanelContent({
+  events,
+  isCapturing,
+  toggleCapturing: onToggleCapturing,
+  clearEvents: onClearEvents,
+  onClose,
+  onTogglePosition,
+  position,
+  modelId,
+}: Omit<DevtoolsPanelProps, "config"> & {
+  position: DevtoolsConfig["position"] | undefined;
+}) {
   const [showFilters] = useState(false);
   const [showSearchSuggestions, setShowSearchSuggestions] = useState(false);
   const [filters, setFilters] = useState<FilterOptions>({
@@ -117,13 +272,6 @@ export function DevtoolsPanel({
       setSelectedStoreId(defaultStoreId);
     }
   }, [availableStoreIds, selectedStoreId]);
-
-  // Resize functionality
-  const [isResizing, setIsResizing] = useState(false);
-  const [panelHeight, setPanelHeight] = useState(config.height || 300);
-  const [panelWidth, setPanelWidth] = useState(config.width || 500);
-  const panelRef = useRef<HTMLDivElement>(null);
-  const resizeRef = useRef<HTMLButtonElement>(null);
 
   // Animation state for REC indicator
   const [isReceivingEvents, setIsReceivingEvents] = useState(false);
@@ -214,72 +362,6 @@ export function DevtoolsPanel({
     filters.toolNames.length > 0 ||
     filters.searchQuery.trim().length > 0;
 
-  // Resize handlers
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsResizing(true);
-  }, []);
-
-  const handleMouseMove = useCallback(
-    (e: MouseEvent) => {
-      if (!isResizing) return;
-
-      if (config.position === "bottom") {
-        const newHeight = window.innerHeight - e.clientY;
-        const minHeight = 200;
-        const maxHeight = window.innerHeight * 0.8;
-        setPanelHeight(Math.max(minHeight, Math.min(maxHeight, newHeight)));
-      } else {
-        const newWidth = window.innerWidth - e.clientX;
-        const minWidth = 500;
-        const maxWidth = window.innerWidth * 0.8;
-        setPanelWidth(Math.max(minWidth, Math.min(maxWidth, newWidth)));
-      }
-    },
-    [isResizing, config.position],
-  );
-
-  const handleMouseUp = useCallback(() => {
-    setIsResizing(false);
-  }, []);
-
-  // Add global mouse event listeners
-  React.useEffect(() => {
-    if (isResizing) {
-      document.addEventListener("mousemove", handleMouseMove);
-      document.addEventListener("mouseup", handleMouseUp);
-      document.body.style.cursor =
-        config.position === "bottom" ? "ns-resize" : "ew-resize";
-      document.body.style.userSelect = "none";
-    } else {
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    }
-
-    return () => {
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    };
-  }, [isResizing, handleMouseMove, handleMouseUp, config.position]);
-
-  // Add keyboard event listener for Escape key
-  React.useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose();
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [onClose]);
-
   // Calculate streaming speed metrics (tokens per second, characters per second)
   const streamingSpeed = useMemo(() => {
     const now = Date.now();
@@ -345,44 +427,7 @@ export function DevtoolsPanel({
   }, [events.length]);
 
   return (
-    <div
-      ref={panelRef}
-      className={`ai-devtools-panel ai-devtools-panel-${config.position} ${className}`}
-      style={{
-        height: config.position === "bottom" ? panelHeight : undefined,
-        width: config.position === "right" ? panelWidth : undefined,
-      }}
-    >
-      {/* Resize Handle */}
-      <button
-        ref={resizeRef}
-        type="button"
-        className={`ai-devtools-resize-handle ai-devtools-resize-handle-${config.position}`}
-        onMouseDown={handleMouseDown}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            // Create a synthetic mouse event for keyboard interaction
-            const syntheticEvent = {
-              ...e,
-              preventDefault: e.preventDefault,
-              clientX: 0,
-              clientY: 0,
-              button: 0,
-              buttons: 0,
-              movementX: 0,
-              movementY: 0,
-              pageX: 0,
-              pageY: 0,
-              screenX: 0,
-              screenY: 0,
-              relatedTarget: null,
-            } as unknown as React.MouseEvent<HTMLButtonElement>;
-            handleMouseDown(syntheticEvent);
-          }
-        }}
-      />
-
+    <div className="ai-devtools-panel-container">
       {/* Header */}
       <div className="ai-devtools-header">
         {/* Main Search Bar */}
@@ -576,27 +621,31 @@ export function DevtoolsPanel({
           </button>
 
           {/* Position Toggle Button */}
-          <button
-            type="button"
-            onClick={onTogglePosition}
-            className="ai-devtools-position-toggle-btn"
-            title={`Switch to ${config.position === "bottom" ? "right" : "bottom"} panel`}
-          >
-            {config.position === "bottom" ? (
-              <RightPanelIcon className="ai-devtools-position-toggle-icon" />
-            ) : (
-              <BottomPanelIcon className="ai-devtools-position-toggle-icon" />
-            )}
-          </button>
+          {onTogglePosition ? (
+            <button
+              type="button"
+              onClick={onTogglePosition}
+              className="ai-devtools-position-toggle-btn"
+              title={`Switch to ${position === "bottom" ? "right" : "bottom"} panel`}
+            >
+              {position === "bottom" ? (
+                <RightPanelIcon className="ai-devtools-position-toggle-icon" />
+              ) : (
+                <BottomPanelIcon className="ai-devtools-position-toggle-icon" />
+              )}
+            </button>
+          ) : null}
 
           {/* Close */}
-          <button
-            type="button"
-            onClick={onClose}
-            className="ai-devtools-close-btn"
-          >
-            <CloseIcon className="ai-devtools-close-icon" />
-          </button>
+          {onClose ? (
+            <button
+              type="button"
+              onClick={onClose}
+              className="ai-devtools-close-btn"
+            >
+              <CloseIcon className="ai-devtools-close-icon" />
+            </button>
+          ) : null}
         </div>
       </div>
 
